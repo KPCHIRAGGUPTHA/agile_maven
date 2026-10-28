@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+
+    environment {
+        DEPLOY_MANIFEST = 'set-04-deploy-web-app-deployment/webapp-deployment.yaml'
+        DEPLOY_NAME = 'webapp-deployment'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Validate Deployment Manifest') {
+            steps {
+                echo '=== Stage 1: Validating Deployment YAML ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply --dry-run=client -f ${DEPLOY_MANIFEST}"
+                    } else {
+                        bat "kubectl apply --dry-run=client -f %DEPLOY_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Web Application') {
+            steps {
+                echo '=== Stage 2: Deploying Web Application using Deployment controller ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${DEPLOY_MANIFEST}"
+                    } else {
+                        bat "kubectl apply -f %DEPLOY_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Track Rollout Status') {
+            steps {
+                echo '=== Stage 3: Monitoring Rollout Completion ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=120s"
+                    } else {
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=120s"
+                    }
+                }
+            }
+        }
+
+        stage('Inspect ReplicaSets and Pods') {
+            steps {
+                echo '=== Stage 4: Inspecting Deployment Replicas, ReplicaSets, and Pods ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl get deployment ${DEPLOY_NAME} -o wide"
+                        sh "kubectl get rs -l app=webapp"
+                        sh "kubectl get pods -l app=webapp -o wide"
+                    } else {
+                        bat "kubectl get deployment %DEPLOY_NAME% -o wide"
+                        bat "kubectl get rs -l app=webapp"
+                        bat "kubectl get pods -l app=webapp -o wide"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Web application Deployment '${DEPLOY_NAME}' is active and healthy!"
+        }
+        failure {
+            echo "FAILED: Deployment rollout failed."
+        }
+    }
+}

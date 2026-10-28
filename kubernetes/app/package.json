@@ -1,0 +1,18 @@
+{
+  "name": "devops-k8s-webapp",
+  "version": "1.0.0",
+  "description": "Sample Agile & DevOps Kubernetes Web Application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/server.test.js"
+  },
+  "keywords": [
+    "kubernetes",
+    "jenkins",
+    "devops",
+    "agile"
+  ],
+  "author": "KPCHIRAGGUPTHA",
+  "license": "MIT"
+}

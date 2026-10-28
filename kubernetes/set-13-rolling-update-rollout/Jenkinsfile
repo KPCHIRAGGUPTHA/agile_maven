@@ -1,0 +1,109 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'UPDATED_IMAGE', defaultValue: 'nginx:1.25-alpine', description: 'Target Docker image for rolling update')
+    }
+
+    environment {
+        DEPLOY_MANIFEST = 'set-13-rolling-update-rollout/deployment.yaml'
+        DEPLOY_NAME = 'rolling-demo-deployment'
+        CONTAINER_NAME = 'app-server'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Deploy Initial Release (v1)') {
+            steps {
+                echo '=== Stage 1: Deploying initial deployment release ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${DEPLOY_MANIFEST}"
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=90s"
+                    } else {
+                        bat "kubectl apply -f %DEPLOY_MANIFEST%"
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=90s"
+                    }
+                }
+            }
+        }
+
+        stage('Verify Initial Revision') {
+            steps {
+                echo '=== Stage 2: Checking initial revision history and pods ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout history deployment/${DEPLOY_NAME}"
+                        sh "kubectl get pods -l app=rolling-demo -o wide"
+                    } else {
+                        bat "kubectl rollout history deployment/%DEPLOY_NAME%"
+                        bat "kubectl get pods -l app=rolling-demo -o wide"
+                    }
+                }
+            }
+        }
+
+        stage('Trigger Zero-Downtime Rolling Update') {
+            steps {
+                echo "=== Stage 3: Updating container image to ${params.UPDATED_IMAGE} ==="
+                script {
+                    if (isUnix()) {
+                        sh "kubectl set image deployment/${DEPLOY_NAME} ${CONTAINER_NAME}=${params.UPDATED_IMAGE} --record"
+                    } else {
+                        bat "kubectl set image deployment/%DEPLOY_NAME% %CONTAINER_NAME%=%UPDATED_IMAGE%"
+                    }
+                }
+            }
+        }
+
+        stage('Verify Rollout Status') {
+            steps {
+                echo '=== Stage 4: Actively monitoring rollout progression ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=120s"
+                    } else {
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=120s"
+                    }
+                }
+            }
+        }
+
+        stage('Inspect Final Revision & Pods') {
+            steps {
+                echo '=== Stage 5: Inspecting updated rollout history and pod versions ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout history deployment/${DEPLOY_NAME}"
+                        sh "kubectl get pods -l app=rolling-demo -o wide"
+                    } else {
+                        bat "kubectl rollout history deployment/%DEPLOY_NAME%"
+                        bat "kubectl get pods -l app=rolling-demo -o wide"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Rolling update completed with zero downtime and verified rollout status!"
+        }
+        failure {
+            echo "FAILED: Rolling update encountered an error. Attempting automatic rollback..."
+            script {
+                if (isUnix()) {
+                    sh "kubectl rollout undo deployment/${DEPLOY_NAME}"
+                    sh "kubectl rollout status deployment/${DEPLOY_NAME}"
+                } else {
+                    bat "kubectl rollout undo deployment/%DEPLOY_NAME%"
+                    bat "kubectl rollout status deployment/%DEPLOY_NAME%"
+                }
+            }
+        }
+    }
+}

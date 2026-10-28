@@ -1,0 +1,86 @@
+pipeline {
+    agent any
+
+    // Triggers automated build on GitHub webhook push or polls every 5 minutes
+    triggers {
+        githubPush()
+        pollSCM('H/5 * * * *')
+    }
+
+    environment {
+        REPO_URL = 'https://github.com/KPCHIRAGGUPTHA/agile_maven.git'
+        BRANCH = 'main'
+        DEPLOY_MANIFEST = 'kubernetes/set-11-github-auto-deploy/deployment.yaml'
+        SERVICE_MANIFEST = 'kubernetes/set-11-github-auto-deploy/service.yaml'
+        DEPLOY_NAME = 'github-auto-deployment'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Checkout Code from GitHub') {
+            steps {
+                echo '=== Stage 1: Checking out latest code changes from GitHub ==='
+                checkout scmGit(
+                    branches: [[name: "*/${BRANCH}"]],
+                    userRemoteConfigs: [[url: "${REPO_URL}"]]
+                )
+            }
+        }
+
+        stage('Inspect Git Commit Changes') {
+            steps {
+                echo '=== Stage 2: Displaying triggering Git commit details ==='
+                script {
+                    if (isUnix()) {
+                        sh 'git log -1 --stat'
+                    } else {
+                        bat 'git log -1 --stat'
+                    }
+                }
+            }
+        }
+
+        stage('Auto-Deploy Changes to Kubernetes') {
+            steps {
+                echo '=== Stage 3: Applying updated configuration to Kubernetes cluster ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${DEPLOY_MANIFEST} -f ${SERVICE_MANIFEST}"
+                    } else {
+                        bat "kubectl apply -f %DEPLOY_MANIFEST% -f %SERVICE_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Verify Deployment Rollout') {
+            steps {
+                echo '=== Stage 4: Verifying automated deployment rollout ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=120s"
+                        sh "kubectl get deployment ${DEPLOY_NAME} -o wide"
+                        sh "kubectl get pods -l app=github-auto-app -o wide"
+                    } else {
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=120s"
+                        bat "kubectl get deployment %DEPLOY_NAME% -o wide"
+                        bat "kubectl get pods -l app=github-auto-app -o wide"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Code changes from GitHub automatically deployed to Kubernetes!"
+        }
+        failure {
+            echo "FAILED: Automated deployment pipeline failed."
+        }
+    }
+}

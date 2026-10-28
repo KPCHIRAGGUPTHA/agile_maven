@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-deployment
+  labels:
+    app: webapp
+    environment: production
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: webapp
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: webapp
+        environment: production
+    spec:
+      containers:
+        - name: webapp-container
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: APP_NAME
+              value: "Agile DevOps Web Application"
+            - name: DEPLOYED_BY
+              value: "Jenkins CI/CD Pipeline"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"

@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-auto-deployment
+  labels:
+    app: github-auto-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-auto-app
+  template:
+    metadata:
+      labels:
+        app: github-auto-app
+    spec:
+      containers:
+        - name: web-app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          env:
+            - name: TRIGGER_SOURCE
+              value: "GitHub Automated Push Webhook"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "150m"
+              memory: "128Mi"

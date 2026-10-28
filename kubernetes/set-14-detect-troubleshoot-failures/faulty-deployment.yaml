@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: troubleshoot-demo-deployment
+  labels:
+    app: troubleshoot-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: troubleshoot-demo
+  template:
+    metadata:
+      labels:
+        app: troubleshoot-demo
+    spec:
+      containers:
+        - name: app-container
+          # Simulated failure: Nonexistent image tag triggers ImagePullBackOff / ErrImagePull
+          image: nginx:nonexistent-faulty-tag-999
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "150m"
+              memory: "128Mi"

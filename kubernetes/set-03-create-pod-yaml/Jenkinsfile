@@ -1,0 +1,78 @@
+pipeline {
+    agent any
+
+    environment {
+        POD_MANIFEST = 'set-03-create-pod-yaml/pod.yaml'
+        POD_NAME = 'standalone-web-pod'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Validate Pod YAML') {
+            steps {
+                echo '=== Stage 1: Validating Pod YAML specification ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply --dry-run=client -f ${POD_MANIFEST}"
+                    } else {
+                        bat "kubectl apply --dry-run=client -f %POD_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Create Pod') {
+            steps {
+                echo '=== Stage 2: Creating Kubernetes Pod from YAML ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${POD_MANIFEST}"
+                    } else {
+                        bat "kubectl apply -f %POD_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Wait for Pod Ready') {
+            steps {
+                echo '=== Stage 3: Waiting for Pod to reach Ready status ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl wait --for=condition=Ready pod/${POD_NAME} --timeout=90s"
+                    } else {
+                        bat "kubectl wait --for=condition=Ready pod/%POD_NAME% --timeout=90s"
+                    }
+                }
+            }
+        }
+
+        stage('Inspect Pod Status') {
+            steps {
+                echo '=== Stage 4: Fetching Pod details, IP, and Node placement ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl get pod ${POD_NAME} -o wide"
+                        sh "kubectl describe pod ${POD_NAME}"
+                    } else {
+                        bat "kubectl get pod %POD_NAME% -o wide"
+                        bat "kubectl describe pod %POD_NAME%"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Kubernetes Pod '${POD_NAME}' created and verified successfully!"
+        }
+        failure {
+            echo "FAILED: Pod creation or health verification failed."
+        }
+    }
+}

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: standalone-web-pod
+  labels:
+    app: standalone-web
+    tier: frontend
+spec:
+  containers:
+    - name: web-container
+      image: nginx:alpine
+      ports:
+        - containerPort: 80
+          name: http
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "50m"
+        limits:
+          memory: "128Mi"
+          cpu: "100m"
+  restartPolicy: Always

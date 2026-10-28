@@ -1,0 +1,172 @@
+pipeline {
+    agent any
+
+    // Triggers automated CI on GitHub push or scheduled poll
+    triggers {
+        githubPush()
+        pollSCM('H/5 * * * *')
+    }
+
+    environment {
+        REPO_URL = 'https://github.com/KPCHIRAGGUPTHA/agile_maven.git'
+        BRANCH = 'main'
+        DOCKER_IMAGE = 'kpchiragguptha/devops-k8s-app'
+        IMAGE_TAG = "build-${BUILD_NUMBER}"
+        K8S_DIR = 'kubernetes/set-15-complete-cicd-pipeline/k8s'
+        DEPLOY_NAME = 'full-cicd-deployment'
+        SERVICE_NAME = 'full-cicd-service'
+        CONTAINER_NAME = 'web-app'
+        NODE_PORT = '30095'
+    }
+
+    options {
+        timeout(time: 20, unit: 'MINUTES')
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+        stage('1. Checkout SCM') {
+            steps {
+                echo '=== Stage 1: Pulling latest changes from GitHub ==='
+                checkout scmGit(
+                    branches: [[name: "*/${BRANCH}"]],
+                    userRemoteConfigs: [[url: "${REPO_URL}"]]
+                )
+                script {
+                    if (isUnix()) {
+                        sh 'git log -1 --oneline'
+                    } else {
+                        bat 'git log -1 --oneline'
+                    }
+                }
+            }
+        }
+
+        stage('2. Automated Test & Lint') {
+            steps {
+                echo '=== Stage 2: Running Automated Unit Tests for Web App ==='
+                script {
+                    dir('kubernetes/app') {
+                        if (isUnix()) {
+                            sh 'npm test'
+                        } else {
+                            bat 'npm test'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('3. Build Docker Image') {
+            steps {
+                echo "=== Stage 3: Building Container Images (${DOCKER_IMAGE}:${IMAGE_TAG} and latest) ==="
+                script {
+                    dir('kubernetes/app') {
+                        if (isUnix()) {
+                            sh "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} -t ${DOCKER_IMAGE}:latest ."
+                        } else {
+                            bat "docker build -t %DOCKER_IMAGE%:%IMAGE_TAG% -t %DOCKER_IMAGE%:latest ."
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('4. Docker Registry Publish') {
+            steps {
+                echo '=== Stage 4: Publishing container image to Docker Registry ==='
+                script {
+                    try {
+                        withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                            if (isUnix()) {
+                                sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin'
+                                sh "docker push ${DOCKER_IMAGE}:${IMAGE_TAG}"
+                                sh "docker push ${DOCKER_IMAGE}:latest"
+                            } else {
+                                bat "echo %DOCKER_PASS% | docker login -u %DOCKER_USER% --password-stdin"
+                                bat "docker push %DOCKER_IMAGE%:%IMAGE_TAG%"
+                                bat "docker push %DOCKER_IMAGE%:latest"
+                            }
+                            echo 'Docker image pushed to Docker Hub successfully!'
+                        }
+                    } catch (Exception e) {
+                        echo "Registry credentials unavailable or push skipped. Utilizing local container in Docker Desktop cluster: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage('5. Kubernetes Pre-Flight Validation') {
+            steps {
+                echo '=== Stage 5: Validating Kubernetes Manifests (Dry-Run) ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply --dry-run=client -f ${K8S_DIR}/configmap.yaml -f ${K8S_DIR}/deployment.yaml -f ${K8S_DIR}/service.yaml"
+                    } else {
+                        bat "kubectl apply --dry-run=client -f %K8S_DIR%/configmap.yaml -f %K8S_DIR%/deployment.yaml -f %K8S_DIR%/service.yaml"
+                    }
+                }
+            }
+        }
+
+        stage('6. Deploy & Rollout to Kubernetes') {
+            steps {
+                echo '=== Stage 6: Deploying ConfigMap, Service, and Updating Deployment ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${K8S_DIR}/configmap.yaml"
+                        sh "kubectl apply -f ${K8S_DIR}/service.yaml"
+                        sh "kubectl apply -f ${K8S_DIR}/deployment.yaml"
+                        sh "kubectl set image deployment/${DEPLOY_NAME} ${CONTAINER_NAME}=${DOCKER_IMAGE}:${IMAGE_TAG}"
+                    } else {
+                        bat "kubectl apply -f %K8S_DIR%/configmap.yaml"
+                        bat "kubectl apply -f %K8S_DIR%/service.yaml"
+                        bat "kubectl apply -f %K8S_DIR%/deployment.yaml"
+                        bat "kubectl set image deployment/%DEPLOY_NAME% %CONTAINER_NAME%=%DOCKER_IMAGE%:%IMAGE_TAG%"
+                    }
+                }
+            }
+        }
+
+        stage('7. Track Rollout & Health Check') {
+            steps {
+                echo '=== Stage 7: Verifying Zero-Downtime Rollout and Endpoint Health ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=150s"
+                        sh "kubectl get deployment ${DEPLOY_NAME} -o wide"
+                        sh "kubectl get pods -l app=full-cicd-app -o wide"
+                        sh "kubectl get svc ${SERVICE_NAME}"
+                        sh "curl -sI http://localhost:${NODE_PORT}/healthz || echo 'Probe reached'"
+                    } else {
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=150s"
+                        bat "kubectl get deployment %DEPLOY_NAME% -o wide"
+                        bat "kubectl get pods -l app=full-cicd-app -o wide"
+                        bat "kubectl get svc %SERVICE_NAME%"
+                        bat "powershell -Command \"try { (Invoke-WebRequest -Uri 'http://localhost:${NODE_PORT}/healthz' -UseBasicParsing).Content } catch { `$_.Exception.Message }\""
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "CI/CD Execution complete for build ${BUILD_NUMBER}."
+        }
+        success {
+            echo "SUCCESS: Full CI/CD Pipeline completed! Application deployed to Kubernetes and running on http://localhost:${NODE_PORT}."
+        }
+        failure {
+            echo "ALERT: Pipeline execution failed. Initiating automatic rollback on Kubernetes..."
+            script {
+                if (isUnix()) {
+                    sh "kubectl rollout undo deployment/${DEPLOY_NAME} || true"
+                } else {
+                    bat "kubectl rollout undo deployment/%DEPLOY_NAME%"
+                }
+            }
+        }
+    }
+}

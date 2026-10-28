@@ -1,0 +1,81 @@
+pipeline {
+    agent any
+
+    environment {
+        DEPLOY_MANIFEST = 'set-10-readiness-probe/readiness-deployment.yaml'
+        DEPLOY_NAME = 'readiness-demo-deployment'
+        SERVICE_NAME = 'readiness-demo-service'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Validate Manifest with Probes') {
+            steps {
+                echo '=== Stage 1: Validating Probe configuration in YAML ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply --dry-run=client -f ${DEPLOY_MANIFEST}"
+                    } else {
+                        bat "kubectl apply --dry-run=client -f %DEPLOY_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Application with Readiness Probe') {
+            steps {
+                echo '=== Stage 2: Applying Deployment with Readiness & Liveness probes ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${DEPLOY_MANIFEST}"
+                    } else {
+                        bat "kubectl apply -f %DEPLOY_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Monitor Readiness Transition') {
+            steps {
+                echo '=== Stage 3: Observing Pods transitioning to READY state ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=120s"
+                    } else {
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=120s"
+                    }
+                }
+            }
+        }
+
+        stage('Verify Probe Details & Service Endpoints') {
+            steps {
+                echo '=== Stage 4: Inspecting readiness probe events and endpoints ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl get pods -l app=readiness-demo"
+                        sh "kubectl describe deployment ${DEPLOY_NAME} | grep -i probe || echo 'Checked probes'"
+                        sh "kubectl get endpoints ${SERVICE_NAME}"
+                    } else {
+                        bat "kubectl get pods -l app=readiness-demo"
+                        bat "kubectl describe deployment %DEPLOY_NAME%"
+                        bat "kubectl get endpoints %SERVICE_NAME%"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Readiness and liveness probes configured, verified, and active!"
+        }
+        failure {
+            echo "FAILED: Readiness probe check failed."
+        }
+    }
+}

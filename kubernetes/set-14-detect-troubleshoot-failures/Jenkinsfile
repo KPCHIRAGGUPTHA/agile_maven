@@ -1,0 +1,110 @@
+pipeline {
+    agent any
+
+    environment {
+        VALID_MANIFEST = 'set-14-detect-troubleshoot-failures/valid-deployment.yaml'
+        FAULTY_MANIFEST = 'set-14-detect-troubleshoot-failures/faulty-deployment.yaml'
+        DEPLOY_NAME = 'troubleshoot-demo-deployment'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Deploy Known Good Baseline') {
+            steps {
+                echo '=== Stage 1: Establishing stable baseline deployment ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${VALID_MANIFEST}"
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=90s"
+                    } else {
+                        bat "kubectl apply -f %VALID_MANIFEST%"
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=90s"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Faulty Update & Detect Failure') {
+            steps {
+                echo '=== Stage 2: Applying faulty update (simulating ImagePullBackOff / Error) ==='
+                script {
+                    def rolloutFailed = false
+                    try {
+                        if (isUnix()) {
+                            sh "kubectl apply -f ${FAULTY_MANIFEST}"
+                            sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=25s"
+                        } else {
+                            bat "kubectl apply -f %FAULTY_MANIFEST%"
+                            bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=25s"
+                        }
+                    } catch (Exception e) {
+                        rolloutFailed = true
+                        echo "⚠️ ALERT: Rollout failure detected as expected! Initiating automated diagnostic troubleshooting..."
+                    }
+
+                    if (!rolloutFailed) {
+                        error("Expected rollout failure was not detected.")
+                    }
+                }
+            }
+        }
+
+        stage('Troubleshoot & Diagnostic Analysis') {
+            steps {
+                echo '=== Stage 3: Capturing Pod Events, State, and Failure Root Cause ==='
+                script {
+                    echo '--- [1] Checking Pod Statuses ---'
+                    if (isUnix()) {
+                        sh "kubectl get pods -l app=troubleshoot-demo -o wide"
+                    } else {
+                        bat "kubectl get pods -l app=troubleshoot-demo -o wide"
+                    }
+
+                    echo '--- [2] Inspecting Pod Warning Events ---'
+                    if (isUnix()) {
+                        sh "kubectl describe pods -l app=troubleshoot-demo | grep -A 10 -i Events || true"
+                    } else {
+                        bat "kubectl describe pods -l app=troubleshoot-demo"
+                    }
+
+                    echo '--- [3] Checking Recent Cluster Warning Events ---'
+                    if (isUnix()) {
+                        sh "kubectl get events --field-selector type=Warning --sort-by='.metadata.creationTimestamp' | tail -n 10 || true"
+                    } else {
+                        bat "kubectl get events --field-selector type=Warning"
+                    }
+                }
+            }
+        }
+
+        stage('Automated Remediation & Rollback') {
+            steps {
+                echo '=== Stage 4: Self-Healing - Executing automated rollback to previous revision ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout undo deployment/${DEPLOY_NAME}"
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=60s"
+                        sh "kubectl get pods -l app=troubleshoot-demo -o wide"
+                    } else {
+                        bat "kubectl rollout undo deployment/%DEPLOY_NAME%"
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=60s"
+                        bat "kubectl get pods -l app=troubleshoot-demo -o wide"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Finished deployment troubleshooting and self-healing workflow."
+        }
+        success {
+            echo "SUCCESS: Failure successfully caught, diagnosed, and recovered via automated rollback!"
+        }
+    }
+}

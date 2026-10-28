@@ -1,0 +1,99 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'NEW_IMAGE', defaultValue: 'nginx:1.25-alpine', description: 'New Docker Image to update deployment with')
+    }
+
+    environment {
+        DEPLOY_MANIFEST = 'set-07-update-docker-image/deployment.yaml'
+        DEPLOY_NAME = 'update-demo-deployment'
+        CONTAINER_NAME = 'app-container'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Deploy Initial Version') {
+            steps {
+                echo '=== Stage 1: Deploying initial deployment manifest ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${DEPLOY_MANIFEST}"
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=90s"
+                    } else {
+                        bat "kubectl apply -f %DEPLOY_MANIFEST%"
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=90s"
+                    }
+                }
+            }
+        }
+
+        stage('Inspect Current Image') {
+            steps {
+                echo '=== Stage 2: Checking current container image ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl get deployment ${DEPLOY_NAME} -o jsonpath=\"{.spec.template.spec.containers[?(@.name=='${CONTAINER_NAME}')].image}\""
+                        echo ""
+                    } else {
+                        bat "kubectl get deployment %DEPLOY_NAME% -o jsonpath=\"{.spec.template.spec.containers[?(@.name=='%CONTAINER_NAME%')].image}\""
+                    }
+                }
+            }
+        }
+
+        stage('Update Deployment Image') {
+            steps {
+                echo "=== Stage 3: Updating container '${CONTAINER_NAME}' to '${params.NEW_IMAGE}' ==="
+                script {
+                    if (isUnix()) {
+                        sh "kubectl set image deployment/${DEPLOY_NAME} ${CONTAINER_NAME}=${params.NEW_IMAGE}"
+                    } else {
+                        bat "kubectl set image deployment/%DEPLOY_NAME% %CONTAINER_NAME%=%NEW_IMAGE%"
+                    }
+                }
+            }
+        }
+
+        stage('Monitor Rolling Update') {
+            steps {
+                echo '=== Stage 4: Tracking rollout status ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=120s"
+                    } else {
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=120s"
+                    }
+                }
+            }
+        }
+
+        stage('Verify New Image & Rollout History') {
+            steps {
+                echo '=== Stage 5: Verifying pods image and revision history ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl get pods -l app=update-demo -o jsonpath=\"{range .items[*]}{.metadata.name}{'\\t'}{.spec.containers[*].image}{'\\n'}{end}\""
+                        sh "kubectl rollout history deployment/${DEPLOY_NAME}"
+                    } else {
+                        bat "kubectl get pods -l app=update-demo -o wide"
+                        bat "kubectl rollout history deployment/%DEPLOY_NAME%"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Deployment image successfully updated to ${params.NEW_IMAGE}!"
+        }
+        failure {
+            echo "FAILED: Image update or rollout failed. Consider rollback with: kubectl rollout undo deployment/${DEPLOY_NAME}"
+        }
+    }
+}

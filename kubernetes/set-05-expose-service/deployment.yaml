@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-demo-deployment
+  labels:
+    app: service-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: service-demo
+  template:
+    metadata:
+      labels:
+        app: service-demo
+    spec:
+      containers:
+        - name: web-server
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"

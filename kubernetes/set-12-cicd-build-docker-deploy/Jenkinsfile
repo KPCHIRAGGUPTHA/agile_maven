@@ -1,0 +1,114 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = 'kpchiragguptha/devops-k8s-app'
+        IMAGE_TAG = "v${BUILD_NUMBER}"
+        DEPLOY_MANIFEST = 'set-12-cicd-build-docker-deploy/deployment.yaml'
+        SERVICE_MANIFEST = 'set-12-cicd-build-docker-deploy/service.yaml'
+        DEPLOY_NAME = 'cicd-docker-deployment'
+        CONTAINER_NAME = 'web-app'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Unit Testing') {
+            steps {
+                echo '=== Stage 1: Running Automated Application Tests ==='
+                script {
+                    dir('app') {
+                        if (isUnix()) {
+                            sh 'npm test'
+                        } else {
+                            bat 'npm test'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo "=== Stage 2: Building Docker image ${IMAGE_NAME}:${IMAGE_TAG} and latest ==="
+                script {
+                    if (isUnix()) {
+                        sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest app"
+                    } else {
+                        bat "docker build -t %IMAGE_NAME%:%IMAGE_TAG% -t %IMAGE_NAME%:latest app"
+                    }
+                }
+            }
+        }
+
+        stage('Optional Docker Registry Push') {
+            steps {
+                echo '=== Stage 3: Checking for Docker Hub push (optional) ==='
+                script {
+                    try {
+                        withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                            if (isUnix()) {
+                                sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin'
+                                sh "docker push ${IMAGE_NAME}:${IMAGE_TAG}"
+                                sh "docker push ${IMAGE_NAME}:latest"
+                            } else {
+                                bat "echo %DOCKER_PASS% | docker login -u %DOCKER_USER% --password-stdin"
+                                bat "docker push %IMAGE_NAME%:%IMAGE_TAG%"
+                                bat "docker push %IMAGE_NAME%:latest"
+                            }
+                            echo 'Docker image successfully pushed to registry!'
+                        }
+                    } catch (Exception e) {
+                        echo "Registry push skipped or credentials not found. Using locally built image in Docker Desktop cluster: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                echo '=== Stage 4: Deploying to Kubernetes Cluster ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${DEPLOY_MANIFEST} -f ${SERVICE_MANIFEST}"
+                        sh "kubectl set image deployment/${DEPLOY_NAME} ${CONTAINER_NAME}=${IMAGE_NAME}:${IMAGE_TAG}"
+                    } else {
+                        bat "kubectl apply -f %DEPLOY_MANIFEST% -f %SERVICE_MANIFEST%"
+                        bat "kubectl set image deployment/%DEPLOY_NAME% %CONTAINER_NAME%=%IMAGE_NAME%:%IMAGE_TAG%"
+                    }
+                }
+            }
+        }
+
+        stage('Verify Rollout & Pods') {
+            steps {
+                echo '=== Stage 5: Verifying rollout completion and active pods ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=120s"
+                        sh "kubectl get deployment ${DEPLOY_NAME} -o wide"
+                        sh "kubectl get pods -l app=cicd-docker-app -o wide"
+                        sh "kubectl get svc cicd-docker-service"
+                    } else {
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=120s"
+                        bat "kubectl get deployment %DEPLOY_NAME% -o wide"
+                        bat "kubectl get pods -l app=cicd-docker-app -o wide"
+                        bat "kubectl get svc cicd-docker-service"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: Docker CI/CD Pipeline built image and deployed revision ${IMAGE_TAG} to Kubernetes!"
+        }
+        failure {
+            echo "FAILED: Docker build or Kubernetes deployment failed."
+        }
+    }
+}

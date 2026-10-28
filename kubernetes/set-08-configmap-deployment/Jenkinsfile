@@ -1,0 +1,82 @@
+pipeline {
+    agent any
+
+    environment {
+        CONFIGMAP_MANIFEST = 'set-08-configmap-deployment/configmap.yaml'
+        DEPLOY_MANIFEST = 'set-08-configmap-deployment/deployment.yaml'
+        CONFIGMAP_NAME = 'app-config'
+        DEPLOY_NAME = 'configmap-demo-deployment'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Validate Manifests') {
+            steps {
+                echo '=== Stage 1: Validating ConfigMap and Deployment YAMLs ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply --dry-run=client -f ${CONFIGMAP_MANIFEST} -f ${DEPLOY_MANIFEST}"
+                    } else {
+                        bat "kubectl apply --dry-run=client -f %CONFIGMAP_MANIFEST% -f %DEPLOY_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy ConfigMap') {
+            steps {
+                echo '=== Stage 2: Creating Kubernetes ConfigMap ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${CONFIGMAP_MANIFEST}"
+                        sh "kubectl describe configmap ${CONFIGMAP_NAME}"
+                    } else {
+                        bat "kubectl apply -f %CONFIGMAP_MANIFEST%"
+                        bat "kubectl describe configmap %CONFIGMAP_NAME%"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Application') {
+            steps {
+                echo '=== Stage 3: Deploying Application with ConfigMap Injection ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${DEPLOY_MANIFEST}"
+                        sh "kubectl rollout status deployment/${DEPLOY_NAME} --timeout=120s"
+                    } else {
+                        bat "kubectl apply -f %DEPLOY_MANIFEST%"
+                        bat "kubectl rollout status deployment/%DEPLOY_NAME% --timeout=120s"
+                    }
+                }
+            }
+        }
+
+        stage('Verify Injected Config in Pod') {
+            steps {
+                echo '=== Stage 4: Verifying ConfigMap env vars and volume mount inside Pod ==='
+                script {
+                    if (isUnix()) {
+                        sh "POD_NAME=\$(kubectl get pods -l app=configmap-demo -o jsonpath='{.items[0].metadata.name}') && echo 'Testing Pod:' \$POD_NAME && kubectl exec \$POD_NAME -- env | grep -E 'APP_ENV|DATABASE_HOST|APP_MESSAGE' && kubectl exec \$POD_NAME -- cat /etc/config/app-settings.json"
+                    } else {
+                        bat "powershell -Command \"`$pod = (kubectl get pods -l app=configmap-demo -o jsonpath='{.items[0].metadata.name}'); Write-Host 'Verifying Pod: ' `$pod; kubectl exec `$pod -- env | Select-String 'APP_ENV|DATABASE_HOST|APP_MESSAGE'; Write-Host '--- Mounted file: ---'; kubectl exec `$pod -- cat /etc/config/app-settings.json\""
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: ConfigMap successfully created and verified inside Pod!"
+        }
+        failure {
+            echo "FAILED: ConfigMap application deployment failed."
+        }
+    }
+}

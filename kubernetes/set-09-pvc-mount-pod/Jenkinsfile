@@ -1,0 +1,101 @@
+pipeline {
+    agent any
+
+    environment {
+        PVC_MANIFEST = 'set-09-pvc-mount-pod/pvc.yaml'
+        POD_MANIFEST = 'set-09-pvc-mount-pod/pod-pvc.yaml'
+        PVC_NAME = 'app-storage-pvc'
+        POD_NAME = 'pvc-demo-pod'
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Validate Manifests') {
+            steps {
+                echo '=== Stage 1: Validating PVC and Pod Manifests ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply --dry-run=client -f ${PVC_MANIFEST} -f ${POD_MANIFEST}"
+                    } else {
+                        bat "kubectl apply --dry-run=client -f %PVC_MANIFEST% -f %POD_MANIFEST%"
+                    }
+                }
+            }
+        }
+
+        stage('Create PersistentVolumeClaim') {
+            steps {
+                echo '=== Stage 2: Creating PersistentVolumeClaim ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${PVC_MANIFEST}"
+                        sh "kubectl get pvc ${PVC_NAME}"
+                    } else {
+                        bat "kubectl apply -f %PVC_MANIFEST%"
+                        bat "kubectl get pvc %PVC_NAME%"
+                    }
+                }
+            }
+        }
+
+        stage('Create Pod Mounting PVC') {
+            steps {
+                echo '=== Stage 3: Creating Pod mounting the PVC at /data ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl apply -f ${POD_MANIFEST}"
+                        sh "kubectl wait --for=condition=Ready pod/${POD_NAME} --timeout=120s"
+                    } else {
+                        bat "kubectl apply -f %POD_MANIFEST%"
+                        bat "kubectl wait --for=condition=Ready pod/%POD_NAME% --timeout=120s"
+                    }
+                }
+            }
+        }
+
+        stage('Verify PVC Binding') {
+            steps {
+                echo '=== Stage 4: Verifying PVC Status is Bound ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl get pvc ${PVC_NAME}"
+                        sh "kubectl get pv"
+                    } else {
+                        bat "kubectl get pvc %PVC_NAME%"
+                        bat "kubectl get pv"
+                    }
+                }
+            }
+        }
+
+        stage('Test Data Persistence') {
+            steps {
+                echo '=== Stage 5: Writing and verifying persistent data inside /data ==='
+                script {
+                    if (isUnix()) {
+                        sh "kubectl exec ${POD_NAME} -- sh -c 'echo \"Jenkins PVC Persistence Verified at \$(date)\" > /data/jenkins-persist.txt'"
+                        sh "kubectl exec ${POD_NAME} -- cat /data/jenkins-persist.txt"
+                        sh "kubectl exec ${POD_NAME} -- df -h /data"
+                    } else {
+                        bat "kubectl exec %POD_NAME% -- sh -c \"echo 'Jenkins PVC Persistence Verified' > /data/jenkins-persist.txt\""
+                        bat "kubectl exec %POD_NAME% -- cat /data/jenkins-persist.txt"
+                        bat "kubectl exec %POD_NAME% -- df -h /data"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCESS: PVC created, bound, mounted, and verified successfully inside Pod!"
+        }
+        failure {
+            echo "FAILED: Persistent volume claim or mount verification failed."
+        }
+    }
+}
